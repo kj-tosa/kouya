@@ -5,20 +5,28 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>荒野行動 ガチャ最適化ツール（ガチャベース / 予算ベース）</title>
     <style>
-        body {
+        html, body {
             font-family: sans-serif;
             background-color: #f7f9fa;
             color: #333;
             margin: 0;
             padding: 20px;
+            overflow-x: hidden;
+            max-width: 100%;
+            box-sizing: border-box;
+        }
+        *, *::before, *::after {
+            box-sizing: inherit;
         }
         .container {
             max-width: 650px;
+            width: 100%;
             margin: 0 auto;
             background: #fff;
             padding: 24px;
             border-radius: 12px;
             box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+            overflow-x: hidden;
         }
         /* タブ切り替えボタンのスタイル */
         .tab-menu {
@@ -66,9 +74,11 @@
         }
         .form-group {
             margin-bottom: 12px;
+            min-width: 0;
         }
         .form-group-full {
             margin-bottom: 12px;
+            min-width: 0;
         }
         label {
             display: block;
@@ -79,6 +89,7 @@
         }
         select, input {
             width: 100%;
+            max-width: 100%;
             padding: 8px;
             border: 1px solid #ddd;
             border-radius: 6px;
@@ -108,6 +119,8 @@
             border: 1px solid #ffd8bf;
             padding: 14px;
             border-radius: 8px;
+            overflow-wrap: break-word;
+            word-break: break-word;
         }
         .result-box h3 {
             margin-top: 0;
@@ -138,6 +151,17 @@
             margin-top: 4px;
             font-weight: bold;
         }
+        @media (max-width: 480px) {
+            body {
+                padding: 12px;
+            }
+            .container {
+                padding: 16px;
+            }
+            .form-grid-2col {
+                gap: 8px;
+            }
+        }
     </style>
 </head>
 <body>
@@ -149,7 +173,7 @@
         <button type="button" class="tab-btn" onclick="switchTab('tool2')">予算ベース</button>
     </div>
 
-    <!-- ================= ガチャベース (旧ツール1) ================= -->
+    <!-- ================= ガチャベース (ツール1 差し替え版) ================= -->
     <div id="tool1-section" class="tool-section active">
         <h2>基本設定</h2>
         <div class="form-grid-2col">
@@ -314,7 +338,7 @@
         </div>
     </div>
 
-    <!-- ================= 予算ベース (旧ツール2) ================= -->
+    <!-- ================= 予算ベース (ツール2 維持) ================= -->
     <div id="tool2-section" class="tool-section">
         <h2>基本設定</h2>
         <div class="form-group-full" style="margin-bottom: 12px;">
@@ -457,7 +481,7 @@ function switchTab(toolName) {
   }
 }
 
-/* ================= ガチャベース ロジック ================= */
+/* ================= ガチャベース ロジック (差し替え統合版) ================= */
 function t1_getVal(id) {
   const el = document.getElementById("t1-" + id);
   return el ? el.value : "";
@@ -518,60 +542,74 @@ function t1_getBonusTicketsForPaid(paidAmount) {
   return totalBonus;
 }
 
+function t1_mergeBreakdownLabels(labels) {
+  const counts = {};
+  const order = [];
+  for (let raw of labels) {
+    const match = String(raw).match(/^(.*)[×x](\d+)$/);
+    if (match) {
+      const name = match[1].trim();
+      const cnt = parseInt(match[2], 10);
+      if (!(name in counts)) {
+        counts[name] = 0;
+        order.push(name);
+      }
+      counts[name] += cnt;
+    } else {
+      const name = String(raw).trim();
+      if (!name) continue;
+      if (!(name in counts)) {
+        counts[name] = 0;
+        order.push(name);
+      }
+      counts[name] += 1;
+    }
+  }
+  return order.map(name => `${name}×${counts[name]}`);
+}
+
 function t1_getOptimalChargeComposition(targetPaid, useWeekly) {
   if (targetPaid <= 0) {
     return { price: 0, paid: 0, totalTickets: 0, breakdown: [], achievedPaid: 0 };
   }
 
-  if (useWeekly && targetPaid >= 5000) {
-    let paid = 5000;
-    let price = 10000;
-    let totalTickets = Math.floor(6280/100);
-    let breakdown = ["毎週1回限りお得パック(6280金券)×1"];
-
-    let counts = { "10,000円パック": 0, "2,400円パック": 0, "480円パック": 0, "160円パック": 0 };
-    while (paid < targetPaid) {
-      if (targetPaid - paid >= 5000) {
-        paid += 5000; price += 10000; totalTickets += Math.floor(5780/100); counts["10,000円パック"]++;
-      } else if (targetPaid - paid >= 1200) {
-        paid += 1200; price += 2400; totalTickets += Math.floor(1325/100); counts["2,400円パック"]++;
-      } else if (targetPaid - paid >= 240) {
-        paid += 240; price += 480; totalTickets += Math.floor(252/100); counts["480円パック"]++;
-      } else {
-        paid += 80; price += 160; totalTickets += Math.floor(85/100); counts["160円パック"]++;
-      }
-    }
-    Object.keys(counts).forEach(k => {
-      if (counts[k] > 0) breakdown.push(`${k}×${counts[k]}`);
-    });
-    let bonus = t1_getBonusTicketsForPaid(paid);
-    return { price, paid, totalTickets: totalTickets + bonus, breakdown, achievedPaid: targetPaid };
-  }
-
   let paid = 0;
   let price = 0;
   let totalTickets = 0;
-  let counts = { "10,000円パック": 0, "2,400円パック": 0, "480円パック": 0, "160円パック": 0 };
+  let rawBreakdown = [];
 
+  if (useWeekly && targetPaid >= 5000) {
+    paid = 5000;
+    price = 10000;
+    totalTickets = Math.floor(6280 / 100);
+    rawBreakdown.push("毎週1回限りお得パック(6280金券)×1");
+  }
+
+  let counts = { "10,000円パック": 0, "2,400円パック": 0, "480円パック": 0, "160円パック": 0 };
   while (paid < targetPaid) {
     if (targetPaid - paid >= 5000) {
-      paid += 5000; price += 10000; totalTickets += Math.floor(5780/100); counts["10,000円パック"]++;
+      paid += 5000; price += 10000; totalTickets += Math.floor(5780 / 100); counts["10,000円パック"]++;
     } else if (targetPaid - paid >= 1200) {
-      paid += 1200; price += 2400; totalTickets += Math.floor(1325/100); counts["2,400円パック"]++;
+      paid += 1200; price += 2400; totalTickets += Math.floor(1325 / 100); counts["2,400円パック"]++;
     } else if (targetPaid - paid >= 240) {
-      paid += 240; price += 480; totalTickets += Math.floor(252/100); counts["480円パック"]++;
+      paid += 240; price += 480; totalTickets += Math.floor(252 / 100); counts["480円パック"]++;
     } else {
-      paid += 80; price += 160; totalTickets += Math.floor(85/100); counts["160円パック"]++;
+      paid += 80; price += 160; totalTickets += Math.floor(85 / 100); counts["160円パック"]++;
     }
   }
 
-  let breakdown = [];
   Object.keys(counts).forEach(k => {
-    if (counts[k] > 0) breakdown.push(`${k}×${counts[k]}`);
+    if (counts[k] > 0) rawBreakdown.push(`${k}×${counts[k]}`);
   });
 
-  let bonus = t1_getBonusTicketsForPaid(paid);
-  return { price, paid, totalTickets: totalTickets + bonus, breakdown, achievedPaid: targetPaid };
+  const bonus = t1_getBonusTicketsForPaid(paid);
+  return {
+    price,
+    paid,
+    totalTickets: totalTickets + bonus,
+    breakdown: t1_mergeBreakdownLabels(rawBreakdown),
+    achievedPaid: targetPaid
+  };
 }
 
 function t1_generateChargeSequences(maxCaps) {
@@ -590,7 +628,7 @@ function t1_generateChargeSequences(maxCaps) {
       return;
     }
     const cap = maxCaps[dayIdx];
-    const validSteps = [...new Set([...steps, cap])].filter(s => s <= cap && s <= prevVal).sort((a,b) => b - a);
+    const validSteps = [...new Set([...steps, cap])].filter(s => s <= cap && s <= prevVal).sort((a, b) => b - a);
     for (let s of validSteps) {
       currentSeq.push(s);
       backtrack(dayIdx + 1, currentSeq, s);
@@ -606,171 +644,35 @@ function t1_generateChargeSequences(maxCaps) {
   return Array.from(uniqueMap.values());
 }
 
-function t1_simulateDay1WithOptions(mode, day1TargetPaid, minDay1Tickets, maxDay1Tickets, limitedPacks, dayDate, weeklyUsedMap) {
-  let availablePacks = [];
-  let currentPacks = JSON.parse(JSON.stringify(limitedPacks));
-  currentPacks.forEach(p => {
-    let limit = (p.tickets === 3 || p.tickets === 10) ? Math.min(p.remain, 1) : Math.min(p.remain, 3);
-    for(let i=0; i<limit; i++) {
-      availablePacks.push({ name: p.name, price: p.price, tickets: p.tickets });
+function t1_buildLimitedPool(limitedPacks) {
+  let pool = [];
+  limitedPacks.forEach(p => {
+    const limit = (p.tickets === 3 || p.tickets === 10) ? Math.min(p.remain, 1) : Math.min(p.remain, 3);
+    for (let i = 0; i < limit; i++) {
+      pool.push({ name: p.name, price: p.price, tickets: p.tickets });
     }
   });
-
-  const normalPool = [
-    { name: "10,000円パック", price: 10000, tickets: Math.floor(5780/100) },
-    { name: "5,000円パック", price: 5000, tickets: Math.floor(2840/100) },
-    { name: "2,400円パック", price: 2400, tickets: Math.floor(1325/100) },
-    { name: "1,500円パック", price: 1500, tickets: Math.floor(820/100) },
-    { name: "480円パック", price: 480, tickets: Math.floor(252/100) }
-  ];
-
-  let sortedLimited = [...availablePacks].sort((a,b) => (a.price/a.tickets) - (b.price/b.tickets));
-
-  let bestVal = 1e15;
-  let bestResult = null;
-
-  const weekKey = t1_getWeekIdentifier(dayDate);
-  const canUseWeekly = !weeklyUsedMap.has(weekKey) && (day1TargetPaid >= 5000);
-  const weeklyOptions = (canUseWeekly ? [1, 0] : [0]);
-
-  for (let useWeekly of weeklyOptions) {
-    const chargeRes = t1_getOptimalChargeComposition(day1TargetPaid, useWeekly === 1);
-
-    let candidateSubsets = [];
-    for (let i = 0; i <= sortedLimited.length; i++) {
-      candidateSubsets.push(sortedLimited.slice(0, i));
-    }
-    if (mode === 'best') {
-      for (let mask = 0; mask < (1 << sortedLimited.length); mask++) {
-        let sub = [];
-        for (let j = 0; j < sortedLimited.length; j++) {
-          if ((mask & (1 << j)) !== 0) sub.push(sortedLimited[j]);
-        }
-        candidateSubsets.push(sub);
-      }
-    }
-
-    for (let subPacks of candidateSubsets) {
-      let subPrice = chargeRes.price;
-      let subTickets = chargeRes.totalTickets;
-      let subPackList = [];
-      let subBreakdown = [...chargeRes.breakdown];
-
-      subPacks.forEach(p => {
-        subPrice += p.price;
-        subTickets += p.tickets;
-        subPackList.push(p.name);
-      });
-
-      if (subTickets < minDay1Tickets) {
-        let needed = minDay1Tickets - subTickets;
-        let addedMap = {};
-        while (needed > 0) {
-          let sel = normalPool[0];
-          if (needed <= 3) sel = normalPool[4];
-          else if (needed <= 8) sel = normalPool[3];
-          else if (needed <= 14) sel = normalPool[2];
-          else if (needed <= 28) sel = normalPool[1];
-
-          subPrice += sel.price;
-          subTickets += sel.tickets;
-          needed -= sel.tickets;
-          addedMap[sel.name] = (addedMap[sel.name] || 0) + 1;
-        }
-        Object.keys(addedMap).forEach(k => {
-          subBreakdown.push(`${k}×${addedMap[k]}`);
-        });
-      }
-
-      if (subTickets >= minDay1Tickets && subTickets <= maxDay1Tickets) {
-        let packSummary = {};
-        subPackList.forEach(name => { packSummary[name] = (packSummary[name] || 0) + 1; });
-        let packStrs = [];
-        Object.keys(packSummary).forEach(k => packStrs.push(`${k}×${packSummary[k]}`));
-
-        if (mode === 'min') {
-          if (subPrice < bestVal || (subPrice === bestVal && (!bestResult || subTickets > bestResult.totalTickets))) {
-            bestVal = subPrice;
-            bestResult = {
-              price: subPrice,
-              totalTickets: subTickets,
-              breakdown: subBreakdown,
-              packList: packStrs,
-              achievedPaid: day1TargetPaid,
-              usedWeekly: (useWeekly === 1)
-            };
-          }
-        } else {
-          let unitPrice = subTickets > 0 ? (subPrice / subTickets) : 1e15;
-          if (unitPrice < bestVal || (Math.abs(unitPrice - bestVal) < 0.0001 && (!bestResult || subTickets > bestResult.totalTickets))) {
-            bestVal = unitPrice;
-            bestResult = {
-              price: subPrice,
-              totalTickets: subTickets,
-              breakdown: subBreakdown,
-              packList: packStrs,
-              achievedPaid: day1TargetPaid,
-              usedWeekly: (useWeekly === 1)
-            };
-          }
-        }
-      }
-    }
-  }
-
-  return bestResult;
+  return pool.sort((a, b) => (a.price / a.tickets) - (b.price / b.tickets));
 }
 
-function t1_simulateLaterDays(seq, startDate, limitedPacks, weeklyUsedMap) {
-  let schedule = [];
-  let totalTickets = 0;
-  let totalPrice = 0;
-  const baseDate = new Date(startDate);
-
-  for (let idx = 1; idx < seq.length; idx++) {
-    const d = new Date(baseDate);
-    d.setDate(d.getDate() + idx);
-    const weekKey = t1_getWeekIdentifier(d);
-    const targetPaid = seq[idx];
-
-    let bestResForDay = null;
-    let minPriceForDay = 1e15;
-
-    const canUseWeekly = !weeklyUsedMap.has(weekKey) && (targetPaid >= 5000);
-    const weeklyOptions = (canUseWeekly ? [1, 0] : [0]);
-
-    for (let useWeekly of weeklyOptions) {
-      const res = t1_getOptimalChargeComposition(targetPaid, useWeekly === 1);
-      if (res.price < minPriceForDay) {
-        minPriceForDay = res.price;
-        bestResForDay = { ...res, usedWeekly: (useWeekly === 1), dateObj: d };
-      }
+function t1_evaluateCandidate(mode, totalPrice, totalTickets, actualDays, bestScore, bestDaysCount, bestScheduleData) {
+  if (mode === 'min') {
+    if (totalPrice < bestScore) return true;
+    if (totalPrice === bestScore) {
+      if (actualDays < bestDaysCount) return true;
+      if (actualDays === bestDaysCount && (!bestScheduleData || totalTickets > bestScheduleData.totalTickets)) return true;
     }
-
-    if (!bestResForDay) {
-      const res = t1_getOptimalChargeComposition(targetPaid, false);
-      bestResForDay = { ...res, usedWeekly: false, dateObj: d };
+    return false;
+  } else {
+    const unitPrice = totalTickets > 0 ? (totalPrice / totalTickets) : 1e15;
+    const prevUnitPrice = bestScore;
+    if (unitPrice < prevUnitPrice - 1e-9) return true;
+    if (Math.abs(unitPrice - prevUnitPrice) <= 1e-9) {
+      if (!bestScheduleData || totalTickets > bestScheduleData.totalTickets) return true;
+      if (totalTickets === bestScheduleData.totalTickets && totalPrice < bestScheduleData.totalPrice) return true;
     }
-
-    if (bestResForDay.usedWeekly) {
-      weeklyUsedMap.add(weekKey);
-    }
-
-    totalTickets += bestResForDay.totalTickets;
-    totalPrice += bestResForDay.price;
-
-    schedule.push({
-      dateObj: d,
-      dateStr: t1_formatDate(d),
-      desc: `チャージ特典 (${bestResForDay.achievedPaid}金券達成) ・ [${bestResForDay.breakdown.join(' ・ ')}]`,
-      tickets: bestResForDay.totalTickets,
-      price: bestResForDay.price,
-      usedWeekly: bestResForDay.usedWeekly,
-      weekKey: weekKey
-    });
+    return false;
   }
-
-  return { schedule, totalTickets, totalPrice };
 }
 
 function t1_buildScheduleForMode(mode, netTargetTickets, startDate, cond1, t1, days1, cond2, t2, days2, limitedPacks) {
@@ -786,6 +688,28 @@ function t1_buildScheduleForMode(mode, netTargetTickets, startDate, cond1, t1, d
   maxCaps.sort((a, b) => b - a);
 
   const candidateSequences = t1_generateChargeSequences(maxCaps);
+  const sortedLimited = t1_buildLimitedPool(limitedPacks);
+
+  const normalPool = [
+    { name: "10,000円パック", price: 10000, tickets: Math.floor(5780 / 100) },
+    { name: "5,000円パック", price: 5000, tickets: Math.floor(2840 / 100) },
+    { name: "2,400円パック", price: 2400, tickets: Math.floor(1325 / 100) },
+    { name: "1,500円パック", price: 1500, tickets: Math.floor(820 / 100) },
+    { name: "480円パック", price: 480, tickets: Math.floor(252 / 100) }
+  ];
+
+  let subsetList = [];
+  for (let i = 0; i <= sortedLimited.length; i++) {
+    subsetList.push(sortedLimited.slice(0, i));
+  }
+  const subsetLimit = Math.min(sortedLimited.length, 10);
+  for (let mask = 0; mask < (1 << subsetLimit); mask++) {
+    let sub = [];
+    for (let j = 0; j < subsetLimit; j++) {
+      if ((mask & (1 << j)) !== 0) sub.push(sortedLimited[j]);
+    }
+    subsetList.push(sub);
+  }
 
   let bestScore = 1e15;
   let bestDaysCount = 999;
@@ -795,97 +719,162 @@ function t1_buildScheduleForMode(mode, netTargetTickets, startDate, cond1, t1, d
     const activeDays = seq.length;
     if (activeDays === 0) continue;
 
-    let seqWeeklyMap = new Set();
-    const d0 = new Date(baseDate);
-    const d0Week = t1_getWeekIdentifier(d0);
+    const dayWeekKeys = seq.map((targetPaid, idx) => {
+      const d = new Date(baseDate);
+      d.setDate(d.getDate() + idx);
+      return {
+        dateObj: d,
+        dateStr: t1_formatDate(d),
+        weekKey: t1_getWeekIdentifier(d),
+        targetPaid: targetPaid,
+        canWeekly: targetPaid >= 5000
+      };
+    });
 
-    let laterRes = t1_simulateLaterDays(seq, startDate, limitedPacks, new Set(seqWeeklyMap));
-    let remMin = Math.max(0, globalMinTickets - laterRes.totalTickets);
-    let remMax = globalMaxTickets - laterRes.totalTickets;
-
-    if (remMax < 0) continue;
-
-    const day1TargetPaid = seq[0];
-    const day1Res = t1_simulateDay1WithOptions(mode, day1TargetPaid, remMin, remMax, limitedPacks, d0, seqWeeklyMap);
-    if (!day1Res) continue;
-
-    if (day1Res.usedWeekly) {
-      seqWeeklyMap.add(d0Week);
-    }
-
-    let finalLaterRes = t1_simulateLaterDays(seq, startDate, limitedPacks, seqWeeklyMap);
-
-    const totalTickets = day1Res.totalTickets + finalLaterRes.totalTickets;
-    const totalPrice = day1Res.price + finalLaterRes.totalPrice;
-    const actualDays = Math.max(1, activeDays);
-
-    if (totalTickets >= globalMinTickets && totalTickets <= globalMaxTickets) {
-      let isBetter = false;
-
-      if (mode === 'min') {
-        if (totalPrice < bestScore) {
-          isBetter = true;
-        } else if (totalPrice === bestScore) {
-          if (actualDays < bestDaysCount) {
-            isBetter = true;
-          } else if (actualDays === bestDaysCount && (!bestScheduleData || totalTickets > bestScheduleData.totalTickets)) {
-            isBetter = true;
-          }
-        }
-      } else {
-        const unitPrice = totalTickets > 0 ? (totalPrice / totalTickets) : 1e15;
-        if (unitPrice < bestScore) {
-          isBetter = true;
-        } else if (Math.abs(unitPrice - bestScore) < 0.0001) {
-          if (totalTickets > (bestScheduleData ? bestScheduleData.totalTickets : 0)) {
-            isBetter = true;
-          }
-        }
-      }
-
-      if (isBetter) {
-        bestScore = (mode === 'min') ? totalPrice : (totalTickets > 0 ? (totalPrice / totalTickets) : 1e15);
-        bestDaysCount = actualDays;
-
-        const schedule = [];
-        let descParts0 = [];
-        if (day1Res.packList && day1Res.packList.length > 0) {
-          descParts0.push(`限定パック [${day1Res.packList.join(' ・ ')}]`);
-        }
-        if (day1Res.breakdown && day1Res.breakdown.length > 0) {
-          const label = day1Res.achievedPaid > 0 ? `チャージ特典 (${day1Res.achievedPaid}金券達成)` : `追加パック構成`;
-          descParts0.push(`${label} ・ [${day1Res.breakdown.join(' ・ ')}]`);
-        }
-        if (descParts0.length === 0) descParts0.push("購入なし (手持ち分で達成)");
-
-        schedule.push({
-          dateStr: t1_formatDate(d0),
-          desc: descParts0.join(' ＋ '),
-          tickets: day1Res.totalTickets,
-          price: day1Res.price
+    function searchWeeklyChoices(dayIdx, usedWeeks, chosenWeeklyFlags) {
+      if (dayIdx === dayWeekKeys.length) {
+        const dayCharges = dayWeekKeys.map((info, i) => {
+          const useW = chosenWeeklyFlags[i];
+          const res = t1_getOptimalChargeComposition(info.targetPaid, useW);
+          return {
+            ...info,
+            useWeekly: useW,
+            chargePrice: res.price,
+            chargeTickets: res.totalTickets,
+            chargeBreakdown: res.breakdown
+          };
         });
 
-        finalLaterRes.schedule.forEach(row => {
-          schedule.push(row);
-        });
+        const laterTickets = dayCharges.slice(1).reduce((acc, r) => acc + r.chargeTickets, 0);
+        const laterPrice = dayCharges.slice(1).reduce((acc, r) => acc + r.chargePrice, 0);
+        const day0 = dayCharges[0];
 
-        bestScheduleData = {
-          schedule: schedule,
-          totalTickets: totalTickets,
-          totalPrice: totalPrice
-        };
+        for (let subPacks of subsetList) {
+          let subPrice = day0.chargePrice;
+          let subTickets = day0.chargeTickets;
+          let subPackList = [];
+          let subBreakdown = [...day0.chargeBreakdown];
+
+          subPacks.forEach(p => {
+            subPrice += p.price;
+            subTickets += p.tickets;
+            subPackList.push(p.name);
+          });
+
+          const currentTotalTickets = subTickets + laterTickets;
+          if (currentTotalTickets < globalMinTickets) {
+            let needed = globalMinTickets - currentTotalTickets;
+            let addedMap = {};
+            while (needed > 0) {
+              let sel = normalPool[0];
+              if (needed <= 3) sel = normalPool[4];
+              else if (needed <= 8) sel = normalPool[3];
+              else if (needed <= 14) sel = normalPool[2];
+              else if (needed <= 28) sel = normalPool[1];
+
+              subPrice += sel.price;
+              subTickets += sel.tickets;
+              needed -= sel.tickets;
+              addedMap[sel.name] = (addedMap[sel.name] || 0) + 1;
+            }
+            Object.keys(addedMap).forEach(k => {
+              subBreakdown.push(`${k}×${addedMap[k]}`);
+            });
+          }
+
+          subBreakdown = t1_mergeBreakdownLabels(subBreakdown);
+
+          const totalTickets = subTickets + laterTickets;
+          const totalPrice = subPrice + laterPrice;
+
+          if (totalTickets >= globalMinTickets && totalTickets <= globalMaxTickets) {
+            if (t1_evaluateCandidate(mode, totalPrice, totalTickets, activeDays, bestScore, bestDaysCount, bestScheduleData)) {
+              bestScore = (mode === 'min') ? totalPrice : (totalTickets > 0 ? (totalPrice / totalTickets) : 1e15);
+              bestDaysCount = activeDays;
+
+              let packSummary = {};
+              subPackList.forEach(name => { packSummary[name] = (packSummary[name] || 0) + 1; });
+              let packStrs = [];
+              Object.keys(packSummary).forEach(k => packStrs.push(`${k}×${packSummary[k]}`));
+
+              let descParts0 = [];
+              if (packStrs.length > 0) {
+                descParts0.push(`限定パック [${packStrs.join(' ・ ')}]`);
+              }
+              if (subBreakdown.length > 0) {
+                const label = day0.targetPaid > 0 ? `チャージ特典 (${day0.targetPaid}金券達成)` : `追加パック構成`;
+                descParts0.push(`${label} ・ [${subBreakdown.join(' ・ ')}]`);
+              }
+              if (descParts0.length === 0) descParts0.push("購入なし (手持ち分で達成)");
+
+              const schedule = [{
+                dateStr: day0.dateStr,
+                desc: descParts0.join(' ＋ '),
+                tickets: subTickets,
+                price: subPrice
+              }];
+
+              for (let i = 1; i < dayCharges.length; i++) {
+                const r = dayCharges[i];
+                const mergedDayBreakdown = t1_mergeBreakdownLabels(r.chargeBreakdown);
+                schedule.push({
+                  dateStr: r.dateStr,
+                  desc: `チャージ特典 (${r.targetPaid}金券達成) ・ [${mergedDayBreakdown.join(' ・ ')}]`,
+                  tickets: r.chargeTickets,
+                  price: r.chargePrice
+                });
+              }
+
+              bestScheduleData = {
+                schedule: schedule,
+                totalTickets: totalTickets,
+                totalPrice: totalPrice
+              };
+            }
+          }
+        }
+        return;
       }
+
+      const info = dayWeekKeys[dayIdx];
+      if (info.canWeekly && !usedWeeks.has(info.weekKey)) {
+        usedWeeks.add(info.weekKey);
+        chosenWeeklyFlags.push(true);
+        searchWeeklyChoices(dayIdx + 1, usedWeeks, chosenWeeklyFlags);
+        chosenWeeklyFlags.pop();
+        usedWeeks.delete(info.weekKey);
+      }
+      chosenWeeklyFlags.push(false);
+      searchWeeklyChoices(dayIdx + 1, usedWeeks, chosenWeeklyFlags);
+      chosenWeeklyFlags.pop();
     }
+
+    searchWeeklyChoices(0, new Set(), []);
   }
 
   return bestScheduleData;
 }
 
 function t1_outputResult(prefix, data, netTargetTickets) {
-  const container = document.getElementById('t1-' + (prefix === 'min' ? 'result1-container' : 'result2-container'));
+  const container = document.getElementById(prefix === 'min' ? 't1-result1-container' : 't1-result2-container');
   if (container) container.style.display = "block";
 
-  if (!data) return;
+  if (!data) {
+    for (let i = 1; i <= 8; i++) {
+      const el = document.getElementById(`t1-${prefix}-day${i}`);
+      if (el) {
+        el.textContent = "";
+        el.style.display = "none";
+      }
+    }
+    const totalEl = document.getElementById(`t1-${prefix}-total`);
+    if (totalEl) {
+      totalEl.textContent = `目標必要枚数: ${netTargetTickets}枚 / 許容範囲内で条件を満たすプランが見つかりませんでした（日数やパック残数を見直してください）`;
+    }
+    const unitEl = document.getElementById(`t1-${prefix}-unit`);
+    if (unitEl) unitEl.textContent = "";
+    return;
+  }
 
   for (let i = 1; i <= 8; i++) {
     const el = document.getElementById(`t1-${prefix}-day${i}`);
@@ -908,7 +897,7 @@ function t1_outputResult(prefix, data, netTargetTickets) {
 
   const unitEl = document.getElementById(`t1-${prefix}-unit`);
   if (unitEl) {
-    const unitPrice = data.totalTickets > 0 ? (data.totalPrice / data.totalTickets).toFixed(1) : 0;
+    const unitPrice = data.totalTickets > 0 ? (data.totalPrice / data.totalTickets).toFixed(1) : "0.0";
     unitEl.textContent = `殿堂チケット1枚あたりの値段： 約 ${unitPrice} 円/枚`;
   }
 }
@@ -941,16 +930,16 @@ function t1_keisanJikkou() {
 
     const isFirstWeek = timing.includes("初週") && !timing.includes("以外");
     const ticketRate = isFirstWeek ? 0.8 : 1.0;
-    
+
     const baseRequiredTickets = Math.ceil(totalRequiredExPt * ticketRate);
 
     const heldTicketsFromKinken = Math.floor(kinken / 100);
     const directHeldTickets = exchiketto + tuuzyouchiketto + heldTicketsFromKinken;
-    
+
     const heldExPtFromNormal = tuuzyoupoint * 0.8;
     const totalHeldExPt = expoint + heldExPtFromNormal;
     const heldTicketsFromPt = Math.floor(totalHeldExPt * ticketRate);
-    
+
     const heldDeductionTickets = directHeldTickets + heldTicketsFromPt;
     const netTargetTickets = Math.max(0, baseRequiredTickets - heldDeductionTickets);
 
@@ -970,25 +959,17 @@ function t1_keisanJikkou() {
   }
 }
 
-
 /* ================= 予算ベース ロジック ================= */
 function t2_getVal(id) {
   const el = document.getElementById("t2-" + id);
   return el ? el.value : "";
 }
 
-function t2_getNum(id) {
+function t2_getNum(id, maxLimit = 99999999) {
   const el = document.getElementById("t2-" + id);
   if (!el) return 0;
   const val = parseInt(String(el.value).replace(/,/g, ""), 10);
-  return isNaN(val) ? 0 : Math.max(0, val);
-}
-
-function t2_parseKangen(id) {
-  const str = String(t2_getVal(id)).replace(/,/g, "");
-  const nums = str.match(/\d+/g);
-  if (!nums || nums.length < 2) return [0, 6480];
-  return [parseInt(nums[1], 10), parseInt(nums[0], 10)];
+  return isNaN(val) ? 0 : Math.min(Math.max(val, 0), maxLimit);
 }
 
 function t2_parseDate(id) {
@@ -1041,58 +1022,40 @@ function t2_getBonusTicketsForPaid(paidAmount) {
 
 function t2_getOptimalChargeComposition(targetPaid, useWeekly) {
   if (targetPaid <= 0) {
-    return { price: 0, paid: 0, totalTickets: 0, breakdown: [], achievedPaid: 0, usedWeekly: false };
-  }
-
-  if (useWeekly && targetPaid >= 5000) {
-    let paid = 5000;
-    let price = 10000;
-    let totalTickets = Math.floor(6280/100);
-    let breakdown = ["毎週1回限りお得パック(6280金券)×1"];
-
-    let counts = { "10,000円パック": 0, "2,400円パック": 0, "480円パック": 0, "160円パック": 0 };
-    while (paid < targetPaid) {
-      if (targetPaid - paid >= 5000) {
-        paid += 5000; price += 10000; totalTickets += Math.floor(5780/100); counts["10,000円パック"]++;
-      } else if (targetPaid - paid >= 1200) {
-        paid += 1200; price += 2400; totalTickets += Math.floor(1325/100); counts["2,400円パック"]++;
-      } else if (targetPaid - paid >= 240) {
-        paid += 240; price += 480; totalTickets += Math.floor(252/100); counts["480円パック"]++;
-      } else {
-        paid += 80; price += 160; totalTickets += Math.floor(85/100); counts["160円パック"]++;
-      }
-    }
-    Object.keys(counts).forEach(k => {
-      if (counts[k] > 0) breakdown.push(`${k}×${counts[k]}`);
-    });
-    let bonus = t2_getBonusTicketsForPaid(paid);
-    return { price, paid, totalTickets: totalTickets + bonus, breakdown, achievedPaid: targetPaid, usedWeekly: true };
+    return { price: 0, paid: 0, totalTickets: 0, breakdown: [], achievedPaid: 0 };
   }
 
   let paid = 0;
   let price = 0;
   let totalTickets = 0;
-  let counts = { "10,000円パック": 0, "2,400円パック": 0, "480円パック": 0, "160円パック": 0 };
+  let breakdown = [];
 
+  if (useWeekly && targetPaid >= 5000) {
+    paid = 5000;
+    price = 10000;
+    totalTickets = Math.floor(6280 / 100);
+    breakdown.push("毎週1回限りお得パック(6280金券)×1");
+  }
+
+  let counts = { "10,000円パック": 0, "2,400円パック": 0, "480円パック": 0, "160円パック": 0 };
   while (paid < targetPaid) {
     if (targetPaid - paid >= 5000) {
-      paid += 5000; price += 10000; totalTickets += Math.floor(5780/100); counts["10,000円パック"]++;
+      paid += 5000; price += 10000; totalTickets += Math.floor(5780 / 100); counts["10,000円パック"]++;
     } else if (targetPaid - paid >= 1200) {
-      paid += 1200; price += 2400; totalTickets += Math.floor(1325/100); counts["2,400円パック"]++;
+      paid += 1200; price += 2400; totalTickets += Math.floor(1325 / 100); counts["2,400円パック"]++;
     } else if (targetPaid - paid >= 240) {
-      paid += 240; price += 480; totalTickets += Math.floor(252/100); counts["480円パック"]++;
+      paid += 240; price += 480; totalTickets += Math.floor(252 / 100); counts["480円パック"]++;
     } else {
-      paid += 80; price += 160; totalTickets += Math.floor(85/100); counts["160円パック"]++;
+      paid += 80; price += 160; totalTickets += Math.floor(85 / 100); counts["160円パック"]++;
     }
   }
 
-  let breakdown = [];
   Object.keys(counts).forEach(k => {
     if (counts[k] > 0) breakdown.push(`${k}×${counts[k]}`);
   });
 
-  let bonus = t2_getBonusTicketsForPaid(paid);
-  return { price, paid, totalTickets: totalTickets + bonus, breakdown, achievedPaid: targetPaid, usedWeekly: false };
+  const bonus = t2_getBonusTicketsForPaid(paid);
+  return { price, paid, totalTickets: totalTickets + bonus, breakdown, achievedPaid: targetPaid };
 }
 
 function t2_generateChargeSequences(maxCaps) {
@@ -1111,7 +1074,7 @@ function t2_generateChargeSequences(maxCaps) {
       return;
     }
     const cap = maxCaps[dayIdx];
-    const validSteps = [...new Set([...steps, cap])].filter(s => s <= cap && s <= prevVal).sort((a,b) => b - a);
+    const validSteps = [...new Set([...steps, cap])].filter(s => s <= cap && s <= prevVal).sort((a, b) => b - a);
     for (let s of validSteps) {
       currentSeq.push(s);
       backtrack(dayIdx + 1, currentSeq, s);
@@ -1127,246 +1090,287 @@ function t2_generateChargeSequences(maxCaps) {
   return Array.from(uniqueMap.values());
 }
 
-function t2_solvePlans(budget, maxCaps, limitedPacks, startDate) {
+function t2_buildScheduleForBudget(mode, minBudget, maxBudget, startDate, cond1, t1, days1, cond2, t2, days2, limitedPacks) {
+  const baseDate = new Date(startDate);
+  const maxCaps = [];
+  for (let i = 0; i < days1; i++) maxCaps.push(cond1);
+  for (let i = 0; i < days2; i++) maxCaps.push(cond2);
+  maxCaps.sort((a, b) => b - a);
+
   const candidateSequences = t2_generateChargeSequences(maxCaps);
-  let allValidPlans = [];
 
-  const maxR3 = Math.min(1, limitedPacks.find(p => p.name === "限定3枚").remain);
-  const maxR10 = Math.min(1, limitedPacks.find(p => p.name === "限定10枚").remain);
-  const maxR50 = Math.min(3, limitedPacks.find(p => p.name === "限定50枚").remain);
-  const maxR90 = Math.min(3, limitedPacks.find(p => p.name === "限定90枚").remain);
-
-  let packCombos = [];
-  for (let n90 = 0; n90 <= maxR90; n90++) {
-    for (let n50 = 0; n50 <= maxR50; n50++) {
-      for (let n10 = 0; n10 <= maxR10; n10++) {
-        for (let n3 = 0; n3 <= maxR3; n3++) {
-          let pCost = n90 * 14800 + n50 * 8300 + n10 * 1000 + n3 * 100;
-          let pTicks = n90 * 90 + n50 * 50 + n10 * 10 + n3 * 3;
-          if (n90 > 0 || n50 > 0 || n10 > 0 || n3 > 0) {
-            packCombos.push({ n90, n50, n10, n3, cost: pCost, tickets: pTicks });
-          }
-        }
-      }
+  let availablePacks = [];
+  limitedPacks.forEach(p => {
+    const limit = (p.tickets === 3 || p.tickets === 10) ? Math.min(p.remain, 1) : Math.min(p.remain, 3);
+    for (let i = 0; i < limit; i++) {
+      availablePacks.push({ name: p.name, price: p.price, tickets: p.tickets });
     }
-  }
-  packCombos.push({ n90: 0, n50: 0, n10: 0, n3: 0, cost: 0, tickets: 0 });
+  });
+  availablePacks.sort((a, b) => (a.price / a.tickets) - (b.price / b.tickets));
+
+  const normalPool = [
+    { name: "10,000円パック", price: 10000, tickets: Math.floor(5780 / 100) },
+    { name: "5,000円パック", price: 5000, tickets: Math.floor(2840 / 100) },
+    { name: "2,400円パック", price: 2400, tickets: Math.floor(1325 / 100) },
+    { name: "1,500円パック", price: 1500, tickets: Math.floor(820 / 100) },
+    { name: "480円パック", price: 480, tickets: Math.floor(252 / 100) },
+    { name: "160円パック", price: 160, tickets: Math.floor(85 / 100) }
+  ];
+
+  let bestScore = (mode === 'max_tickets') ? -1 : 1e15;
+  let bestScheduleData = null;
 
   for (let seq of candidateSequences) {
-    for (let pCombo of packCombos) {
-      let weeklyUsedMap = new Set();
-      let totalSpent = 0;
-      let totalTickets = 0;
-      let schedule = [];
-      let possible = true;
+    const activeDays = seq.length;
+    if (activeDays === 0) continue;
 
-      for (let idx = 0; idx < seq.length; idx++) {
-        const d = new Date(startDate);
-        d.setDate(d.getDate() + idx);
-        const weekKey = t2_getWeekIdentifier(d);
-        const targetPaid = seq[idx];
+    let weeklyUsedMap = new Set();
+    let baseChargeTickets = 0;
+    let baseChargePrice = 0;
+    let daySchedules = [];
 
-        const canUseWeekly = !weeklyUsedMap.has(weekKey) && (targetPaid >= 5000);
-        
-        let bestDayRes = null;
-        let minDayPrice = Infinity;
+    for (let idx = 0; idx < activeDays; idx++) {
+      const d = new Date(baseDate);
+      d.setDate(d.getDate() + idx);
+      const weekKey = t2_getWeekIdentifier(d);
+      const targetPaid = seq[idx];
 
-        for (let uw = (canUseWeekly ? 1 : 0); uw >= 0; uw--) {
-          const res = t2_getOptimalChargeComposition(targetPaid, uw === 1);
-          if (res.price < minDayPrice) {
-            minDayPrice = res.price;
-            bestDayRes = res;
+      const canUseWeekly = !weeklyUsedMap.has(weekKey) && (targetPaid >= 5000);
+      const weeklyOptions = canUseWeekly ? [1, 0] : [0];
+
+      let bestDayRes = null;
+      for (let useWeekly of weeklyOptions) {
+        const res = t2_getOptimalChargeComposition(targetPaid, useWeekly === 1);
+        if (!bestDayRes || res.price < bestDayRes.price) {
+          bestDayRes = { ...res, usedWeekly: (useWeekly === 1) };
+        }
+      }
+
+      if (bestDayRes && bestDayRes.usedWeekly) {
+        weeklyUsedMap.add(weekKey);
+      }
+
+      baseChargeTickets += bestDayRes.totalTickets;
+      baseChargePrice += bestDayRes.price;
+
+      daySchedules.push({
+        dateStr: t2_formatDate(d),
+        desc: `チャージ特典 (${bestDayRes.achievedPaid}有償達成) ・ [${bestDayRes.breakdown.join(' ・ ')}]`,
+        tickets: bestDayRes.totalTickets,
+        price: bestDayRes.price
+      });
+    }
+
+    if (baseChargePrice > maxBudget) continue;
+
+    let subsetList = [];
+    for (let i = 0; i <= availablePacks.length; i++) {
+      subsetList.push(availablePacks.slice(0, i));
+    }
+    const subsetLimit = Math.min(availablePacks.length, 10);
+    for (let mask = 0; mask < (1 << subsetLimit); mask++) {
+      let sub = [];
+      for (let j = 0; j < subsetLimit; j++) {
+        if ((mask & (1 << j)) !== 0) sub.push(availablePacks[j]);
+      }
+      subsetList.push(sub);
+    }
+
+    for (let subPacks of subsetList) {
+      let curPrice = baseChargePrice;
+      let curTickets = baseChargeTickets;
+      let packNames = [];
+      let extraBreakdown = [];
+
+      for (let p of subPacks) {
+        if (curPrice + p.price <= maxBudget) {
+          curPrice += p.price;
+          curTickets += p.tickets;
+          packNames.push(p.name);
+        }
+      }
+
+      let remBudget = maxBudget - curPrice;
+      let addedMap = {};
+      let improved = true;
+      while (improved && remBudget >= 160) {
+        improved = false;
+        for (let np of normalPool) {
+          if (np.price <= remBudget) {
+            curPrice += np.price;
+            curTickets += np.tickets;
+            remBudget -= np.price;
+            addedMap[np.name] = (addedMap[np.name] || 0) + 1;
+            improved = true;
+            break;
+          }
+        }
+      }
+      Object.keys(addedMap).forEach(k => extraBreakdown.push(`${k}×${addedMap[k]}`));
+
+      if (curPrice >= minBudget && curPrice <= maxBudget && curTickets > 0) {
+        const unitPrice = curPrice / curTickets;
+        let isBetter = false;
+
+        if (mode === 'max_tickets') {
+          if (curTickets > bestScore) {
+            isBetter = true;
+          } else if (curTickets === bestScore) {
+            if (!bestScheduleData || curPrice < bestScheduleData.totalPrice) {
+              isBetter = true;
+            }
+          }
+        } else {
+          if (unitPrice < bestScore - 1e-9) {
+            isBetter = true;
+          } else if (Math.abs(unitPrice - bestScore) <= 1e-9) {
+            if (!bestScheduleData || curTickets > bestScheduleData.totalTickets) {
+              isBetter = true;
+            }
           }
         }
 
-        if (bestDayRes.usedWeekly) {
-          weeklyUsedMap.add(weekKey);
+        if (isBetter) {
+          bestScore = (mode === 'max_tickets') ? curTickets : unitPrice;
+
+          let packSummary = {};
+          packNames.forEach(n => { packSummary[n] = (packSummary[n] || 0) + 1; });
+          let packStrs = [];
+          Object.keys(packSummary).forEach(k => packStrs.push(`${k}×${packSummary[k]}`));
+
+          let descParts0 = [];
+          if (packStrs.length > 0) descParts0.push(`限定パック [${packStrs.join(' ・ ')}]`);
+          if (extraBreakdown.length > 0) descParts0.push(`追加パック [${extraBreakdown.join(' ・ ')}]`);
+          descParts0.push(daySchedules[0].desc);
+
+          const finalSchedule = daySchedules.map((row, idx) => {
+            if (idx === 0) {
+              return {
+                dateStr: row.dateStr,
+                desc: descParts0.join(' ＋ '),
+                tickets: row.tickets + (curTickets - baseChargeTickets),
+                price: row.price + (curPrice - baseChargePrice)
+              };
+            }
+            return row;
+          });
+
+          bestScheduleData = {
+            schedule: finalSchedule,
+            totalTickets: curTickets,
+            totalPrice: curPrice
+          };
         }
-
-        let dayPrice = bestDayRes.price;
-        let dayTickets = bestDayRes.totalTickets;
-        let dayPacksList = [];
-        let dayBreakdown = [...bestDayRes.breakdown];
-
-        if (idx === 0 && (pCombo.cost > 0)) {
-          dayPrice += pCombo.cost;
-          dayTickets += pCombo.tickets;
-          if (pCombo.n90 > 0) dayPacksList.push(`限定90枚×${pCombo.n90}`);
-          if (pCombo.n50 > 0) dayPacksList.push(`限定50枚×${pCombo.n50}`);
-          if (pCombo.n10 > 0) dayPacksList.push(`限定10枚×${pCombo.n10}`);
-          if (pCombo.n3 > 0) dayPacksList.push(`限定3枚×${pCombo.n3}`);
-        }
-
-        if (totalSpent + dayPrice > budget) {
-          possible = false;
-          break;
-        }
-
-        totalSpent += dayPrice;
-        totalTickets += dayTickets;
-
-        let descParts = [];
-        if (dayPacksList.length > 0) {
-          descParts.push(`限定パック [${dayPacksList.join(' ・ ')}]`);
-        }
-        if (dayBreakdown.length > 0) {
-          const label = bestDayRes.achievedPaid > 0 ? `チャージ特典分 (${bestDayRes.achievedPaid}金券達成)` : `追加パック構成`;
-          descParts.push(`${label} [${dayBreakdown.join(' ・ ')}]`);
-        }
-        if (descParts.length === 0) descParts.push("購入なし");
-
-        schedule.push({
-          dateStr: t2_formatDate(d),
-          desc: descParts.join(' ＋ '),
-          tickets: dayTickets,
-          price: dayPrice
-        });
-      }
-
-      if (possible && totalTickets > 0 && totalSpent <= budget) {
-        allValidPlans.push({ schedule, totalTickets, totalPrice: totalSpent, daysCount: seq.length });
       }
     }
   }
 
-  if (allValidPlans.length === 0) return { plan1: null, plan2: null };
-
-  const minRangeP1 = Math.max(0, budget - 5000);
-  let plan1Candidates = allValidPlans.filter(p => p.totalPrice >= minRangeP1 && p.totalPrice <= budget);
-
-  if (plan1Candidates.length === 0) {
-    plan1Candidates = [...allValidPlans].sort((a, b) => Math.abs(b.totalPrice - budget) - Math.abs(a.totalPrice - budget));
-  }
-
-  plan1Candidates.sort((a, b) => {
-    if (b.totalTickets !== a.totalTickets) return b.totalTickets - a.totalTickets;
-    return b.totalPrice - a.totalPrice;
-  });
-  const plan1 = plan1Candidates[0];
-
-  const minRangeP2 = Math.max(0, budget - 10000);
-  let plan2Candidates = allValidPlans.filter(p => p.totalPrice >= minRangeP2 && p.totalPrice <= budget);
-
-  if (plan2Candidates.length === 0) {
-    plan2Candidates = [...allValidPlans].sort((a, b) => Math.abs(a.totalPrice - (budget - 5000)) - Math.abs(b.totalPrice - (budget - 5000)));
-  }
-
-  plan2Candidates.sort((a, b) => {
-    let unitA = a.totalPrice / a.totalTickets;
-    let unitB = b.totalPrice / b.totalTickets;
-    if (Math.abs(unitA - unitB) > 0.001) return unitA - unitB;
-    return b.totalTickets - a.totalTickets;
-  });
-  const plan2 = plan2Candidates[0];
-
-  return { plan1, plan2 };
+  return bestScheduleData;
 }
 
-function t2_keisanBudgetOptimal() {
+function t2_outputResult(resNum, data, timing, haveCrystals) {
+  const container = document.getElementById(`t2-result${resNum}-container`);
+  if (container) container.style.display = "block";
+
+  if (!data) {
+    for (let i = 1; i <= 8; i++) {
+      const el = document.getElementById(`t2-res${resNum}-day${i}`);
+      if (el) {
+        el.textContent = "";
+        el.style.display = "none";
+      }
+    }
+    const totalEl = document.getElementById(`t2-res${resNum}-total`);
+    if (totalEl) totalEl.textContent = "指定予算範囲内で条件を満たすプランが見つかりませんでした";
+    const unitEl = document.getElementById(`t2-res${resNum}-unit`);
+    if (unitEl) unitEl.textContent = "";
+    const gachaEl = document.getElementById(`t2-res${resNum}-gacha`);
+    if (gachaEl) gachaEl.textContent = "";
+    return;
+  }
+
+  for (let i = 1; i <= 8; i++) {
+    const el = document.getElementById(`t2-res${resNum}-day${i}`);
+    if (el) {
+      const row = data.schedule[i - 1];
+      if (row) {
+        el.textContent = `${i}日目 (${row.dateStr})：${row.desc} ／ +${row.tickets}枚 ／ ${row.price.toLocaleString()}円`;
+        el.style.display = "block";
+      } else {
+        el.textContent = "";
+        el.style.display = "none";
+      }
+    }
+  }
+
+  const totalEl = document.getElementById(`t2-res${resNum}-total`);
+  if (totalEl) {
+    totalEl.textContent = `合計獲得: ${data.totalTickets}枚 / 合計金額: ${data.totalPrice.toLocaleString()}円`;
+  }
+
+  const unitEl = document.getElementById(`t2-res${resNum}-unit`);
+  if (unitEl) {
+    const unitPrice = data.totalTickets > 0 ? (data.totalPrice / data.totalTickets).toFixed(1) : "0.0";
+    unitEl.textContent = `殿堂チケット1枚あたりの値段： 約 ${unitPrice} 円/枚`;
+  }
+
+  const gachaEl = document.getElementById(`t2-res${resNum}-gacha`);
+  if (gachaEl) {
+    const isFirstWeek = timing.includes("初週") && !timing.includes("以外");
+    const rate = isFirstWeek ? (1 / 0.8) : 1.0;
+    const estExPt = data.totalTickets * rate;
+    const estNormalPt = estExPt / 0.8;
+    const estCrystals = (estNormalPt / 250).toFixed(2);
+    gachaEl.textContent = `獲得目安：通常Pt約 ${Math.round(estNormalPt)}Pt（水晶換算 約${estCrystals}個分・手持ち水晶${haveCrystals}個と合算で約${(parseFloat(estCrystals) + haveCrystals).toFixed(2)}個）`;
+  }
+}
+
+function t2_keisanJikkou() {
   try {
     const budget = t2_getNum("budget");
-    if (budget <= 0) {
-      alert("有効な予算を入力してください。");
-      return;
-    }
-
     const timing = String(t2_getVal("hikutaimingu"));
-    const isFirstWeek = timing.includes("初週");
-    const timingLabel = isFirstWeek ? "初週" : "初週以外";
-
     const startDate = t2_parseDate("kaishibi");
-    const [t1, cond1] = t2_parseKangen("kangen-1");
-    let days1 = t2_getNum("nissuu-1");
-    if (days1 < 0) days1 = 0; if (days1 > 4) days1 = 4;
-    
-    const [t2, cond2] = t2_parseKangen("kangen-2");
-    let days2 = t2_getNum("nissuu-2");
-    if (days2 < 0) days2 = 0; if (days2 > 4) days2 = 4;
 
     const limitedPacks = [
-      { name: "限定3枚", price: 100, tickets: 3, remain: Math.min(1, Math.max(0, t2_getNum("pack3"))) },
-      { name: "限定10枚", price: 1000, tickets: 10, remain: Math.min(1, Math.max(0, t2_getNum("pack10"))) },
-      { name: "限定50枚", price: 8300, tickets: 50, remain: Math.min(3, Math.max(0, t2_getNum("pack50"))) },
-      { name: "限定90枚", price: 14800, tickets: 90, remain: Math.min(3, Math.max(0, t2_getNum("pack90"))) }
+      { name: "限定3枚", price: 100, tickets: 3, remain: t2_getNum("pack3", 1) },
+      { name: "限定10枚", price: 1000, tickets: 10, remain: t2_getNum("pack10", 1) },
+      { name: "限定50枚", price: 8300, tickets: 50, remain: t2_getNum("pack50", 3) },
+      { name: "限定90枚", price: 14800, tickets: 90, remain: t2_getNum("pack90", 3) }
     ];
 
-    const { plan1, plan2 } = t2_solvePlans(budget, (() => {
-      const mc = [];
-      for (let i = 0; i < days1; i++) mc.push(cond1);
-      for (let i = 0; i < days2; i++) mc.push(cond2);
-      mc.sort((a, b) => b - a);
-      return mc;
-    })(), limitedPacks, startDate);
+    const [t1, cond1] = [30, 6480];
+    const days1 = t2_getNum("nissuu-1");
+    const [t2, cond2] = [10, 1280];
+    const days2 = t2_getNum("nissuu-2");
 
-    if (!plan1) {
-      alert("入力されたご予算では最小構成の購入もできません。予算を増やしてください。");
-      return;
-    }
+    const minBudget1 = Math.max(0, budget - 5000);
+    const minBudget2 = Math.max(0, budget - 10000);
 
-    const c1 = document.getElementById('t2-result1-container');
-    if (c1) c1.style.display = "block";
-    for (let i = 1; i <= 8; i++) {
-      const el = document.getElementById(`t2-res1-day${i}`);
-      if (el) {
-        if (plan1.schedule[i - 1]) {
-          const row = plan1.schedule[i - 1];
-          el.textContent = `${i}日目 (${row.dateStr})：${row.desc} ／ +${row.tickets}枚 ／ ${row.price.toLocaleString()}円`;
-          el.style.display = "block";
-        } else {
-          el.textContent = "";
-          el.style.display = "none";
-        }
-      }
-    }
-    document.getElementById('t2-res1-total').textContent = `合計獲得チケット: ${plan1.totalTickets}枚 / 合計金額: ${plan1.totalPrice.toLocaleString()}円 (予算残額: ${(budget - plan1.totalPrice).toLocaleString()}円)`;
-    let u1 = plan1.totalTickets > 0 ? (plan1.totalPrice / plan1.totalTickets).toFixed(1) : 0;
-    document.getElementById('t2-res1-unit').textContent = `殿堂チケット1枚あたりの値段： 約 ${u1} 円/枚`;
-    
-    let g1 = Math.floor(plan1.totalTickets / (isFirstWeek ? 8 : 10) * 10);
-    document.getElementById('t2-res1-gacha').textContent = `ガチャ換算： 約 ${g1} 連分（${timingLabel}基準）`;
+    const plan1 = t2_buildScheduleForBudget('max_tickets', minBudget1, budget, startDate, cond1, t1, days1, cond2, t2, days2, limitedPacks);
+    const plan2 = t2_buildScheduleForBudget('min_unit', minBudget2, budget, startDate, cond1, t1, days1, cond2, t2, days2, limitedPacks);
 
-    const c2 = document.getElementById('t2-result2-container');
-    if (c2) c2.style.display = "block";
-    for (let i = 1; i <= 8; i++) {
-      const el = document.getElementById(`t2-res2-day${i}`);
-      if (el) {
-        if (plan2.schedule[i - 1]) {
-          const row = plan2.schedule[i - 1];
-          el.textContent = `${i}日目 (${row.dateStr})：${row.desc} ／ +${row.tickets}枚 ／ ${row.price.toLocaleString()}円`;
-          el.style.display = "block";
-        } else {
-          el.textContent = "";
-          el.style.display = "none";
-        }
-      }
-    }
-    document.getElementById('t2-res2-total').textContent = `合計獲得チケット: ${plan2.totalTickets}枚 / 合計金額: ${plan2.totalPrice.toLocaleString()}円 (予算残額: ${(budget - plan2.totalPrice).toLocaleString()}円)`;
-    let u2 = plan2.totalTickets > 0 ? (plan2.totalPrice / plan2.totalTickets).toFixed(1) : 0;
-    document.getElementById('t2-res2-unit').textContent = `殿堂チケット1枚あたりの値段： 約 ${u2} 円/枚`;
-    
-    let g2 = Math.floor(plan2.totalTickets / (isFirstWeek ? 8 : 10) * 10);
-    document.getElementById('t2-res2-gacha').textContent = `ガチャ換算： 約 ${g2} 連分（${timingLabel}基準）`;
-
+    t2_outputResult(1, plan1, timing, 0);
+    t2_outputResult(2, plan2, timing, 0);
   } catch (e) {
     console.error(e);
-    alert("計算結果の算出時にエラーが発生しました: " + e.message);
+    alert("予算計算時にエラーが発生しました: " + e.message);
   }
 }
 
 document.addEventListener("DOMContentLoaded", function() {
-  const btn1 = document.getElementById("t1-calc-btn");
-  if (btn1) {
-    btn1.addEventListener("click", function(e) {
+  const t1Btn = document.getElementById("t1-calc-btn");
+  if (t1Btn) {
+    t1Btn.addEventListener("click", function(e) {
       e.preventDefault();
       t1_keisanJikkou();
     });
   }
 
-  const btn2 = document.getElementById("t2-calc-btn");
-  if (btn2) {
-    btn2.addEventListener("click", function(e) {
+  const t2Btn = document.getElementById("t2-calc-btn");
+  if (t2Btn) {
+    t2Btn.addEventListener("click", function(e) {
       e.preventDefault();
-      t2_keisanBudgetOptimal();
+      t2_keisanJikkou();
     });
   }
 });
